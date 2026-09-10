@@ -1,0 +1,4 @@
+﻿<resources>
+    <style name="Theme.WifiApp" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+    </style>
+</resources>

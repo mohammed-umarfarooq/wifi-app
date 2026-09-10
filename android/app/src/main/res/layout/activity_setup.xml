@@ -1,0 +1,50 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Setup Permissions"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/tvVpnStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="VPN Authorization: Missing"
+        android:layout_marginBottom="8dp" />
+
+    <Button
+        android:id="@+id/btnRequestVpn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Request VPN Access"
+        android:layout_marginBottom="16dp" />
+
+    <TextView
+        android:id="@+id/tvUsageStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Usage Stats Access: Missing"
+        android:layout_marginBottom="8dp" />
+
+    <Button
+        android:id="@+id/btnRequestUsage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Request Usage Stats"
+        android:layout_marginBottom="24dp" />
+
+    <Button
+        android:id="@+id/btnFinishSetup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Finish Setup"
+        android:enabled="false" />
+</LinearLayout>

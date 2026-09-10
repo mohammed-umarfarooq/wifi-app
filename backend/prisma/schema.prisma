@@ -32,6 +32,7 @@ model Device {
   name           String
   
   fcmToken       String?
+  apiToken       String?  @unique // Used for native Android API authentication
   
   // Base Quotas
   timeQuotaLimit Int?     // in minutes
