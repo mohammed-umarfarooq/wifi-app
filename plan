@@ -1,0 +1,2436 @@
+# MASTER DEVELOPMENT SPECIFICATION
+
+## Family Android Network Access Management System
+
+You are the primary senior software architect and implementation agent for this project.
+
+Your job is to DESIGN, IMPLEMENT, TEST, DEBUG, DOCUMENT, and ITERATE a complete production-quality system consisting of:
+
+1. An Android client application.
+2. A cloud backend/API.
+3. A PostgreSQL database.
+4. A web-based administrator dashboard.
+5. Push communication between the backend and Android devices.
+6. Optional Android Device Owner / Android Enterprise management mode.
+7. Local Android traffic/session enforcement.
+8. Secure Wi-Fi credential provisioning.
+
+The system is intended for a FAMILY environment. The administrator owns/controls the network and the participating Android devices. All required permissions will be granted by the device owner.
+
+Do not take shortcuts by building a fake UI or mock-only implementation. The final project must have real working architecture, real API communication, persistent database storage, authentication, Android networking, quota accounting, session management, and enforcement.
+
+---
+
+# 1. CORE PURPOSE
+
+Build a system where family members can use an Airtel Xstream Wi-Fi connection through an Android application without being given the Wi-Fi password directly.
+
+The Airtel router itself is NOT being modified.
+
+The router is simply the Internet/Wi-Fi source.
+
+The Android application controls access on each participating Android device.
+
+The system must support:
+
+* Admin-created user accounts.
+* No public user registration.
+* Secure user authentication.
+* Device registration.
+* Secure Wi-Fi credential delivery.
+* Automatic Wi-Fi connection where Android permits it.
+* Data quotas.
+* Time quotas.
+* Unlimited data.
+* Unlimited time.
+* Combined data + time limits.
+* Session tracking.
+* Device usage tracking.
+* Background enforcement.
+* Remote disable.
+* Remote quota changes.
+* Remote session termination.
+* Usage history.
+* Live device status.
+* Push commands.
+* Optional Device Owner management.
+* Stronger VPN enforcement in managed mode.
+* Recovery after reboot.
+* Recovery after network loss.
+* Recovery after app process restart.
+* Server-authoritative quotas.
+
+The system must NEVER claim to control the Airtel router itself.
+
+---
+
+# 2. VERY IMPORTANT PLATFORM RULE
+
+Do not assume Android allows unrestricted manipulation of saved Wi-Fi networks.
+
+The implementation must respect Android's actual networking APIs and version-specific restrictions.
+
+Use the appropriate API depending on:
+
+* Android API level.
+* Device manufacturer.
+* Whether the application is Device Owner.
+* Whether the device is managed.
+* Whether user approval is required.
+
+Relevant Android APIs include:
+
+* ConnectivityManager
+* WifiNetworkSuggestion
+* WifiNetworkSpecifier where appropriate
+* Settings ACTION_WIFI_ADD_NETWORKS where appropriate
+* DevicePolicyManager
+* VpnService
+* NetworkCapabilities
+* NetworkCallback
+
+Do NOT implement fake or unsupported APIs such as:
+
+wifiManager.setWifiPassword(...)
+
+Do NOT assume an ordinary application can silently modify or delete arbitrary saved networks.
+
+For Android 10+, investigate and correctly use WifiNetworkSuggestion for Internet-capable Wi-Fi provisioning where appropriate.
+
+For managed Device Owner devices, investigate the stronger DevicePolicyManager capabilities available to the target API level.
+
+If a requested operation is impossible for a specific Android version/device state, implement a graceful fallback and clearly report the capability limitation to the backend/admin dashboard.
+
+---
+
+# 3. SYSTEM ARCHITECTURE
+
+Use this architecture:
+
+```
+                ADMIN
+                  |
+                  v
+         NEXT.JS ADMIN DASHBOARD
+                  |
+                HTTPS
+                  |
+                  v
+           BACKEND API
+                  |
+         +--------+--------+
+         |                 |
+         v                 v
+    PostgreSQL          FCM
+         |                 |
+         |                 |
+         +--------+--------+
+                  |
+                  v
+           ANDROID CLIENT
+                  |
+      +-----------+-----------+
+      |           |           |
+      v           v           v
+    Wi-Fi      Usage       VPNService
+   Manager     Monitor      Enforcement
+      |           |           |
+      +-----------+-----------+
+                  |
+                  v
+          AIRTEL XSTREAM
+               WI-FI
+```
+
+The backend is the authoritative source for:
+
+* User status.
+* Device authorization.
+* Quotas.
+* Sessions.
+* Server timestamps.
+* Credential version.
+* Access state.
+* Administrative commands.
+
+The Android application is responsible for:
+
+* Authentication.
+* Device registration.
+* Local Wi-Fi provisioning/connection.
+* Local usage measurement.
+* Session enforcement.
+* VPN enforcement where enabled.
+* Heartbeats.
+* Reporting usage.
+* Executing authorized commands.
+
+---
+
+# 4. TECHNOLOGY STACK
+
+Use:
+
+## Android
+
+* Kotlin.
+* Modern Android SDK.
+* Jetpack Compose.
+* AndroidX.
+* Coroutines.
+* Flow/StateFlow.
+* Retrofit or Ktor client.
+* OkHttp.
+* Room.
+* Android Keystore.
+* WorkManager where appropriate.
+* Foreground Service where legally/technically required for continuous enforcement.
+* ConnectivityManager.
+* WifiNetworkSuggestion / supported Wi-Fi APIs.
+* VpnService.
+* DevicePolicyManager for managed mode.
+* Firebase Cloud Messaging.
+
+Use clean architecture.
+
+Suggested:
+
+app/
+core/
+data/
+domain/
+network/
+database/
+security/
+auth/
+device/
+wifi/
+session/
+usage/
+quota/
+vpn/
+notifications/
+management/
+ui/
+
+Use dependency injection, preferably Hilt.
+
+---
+
+# 5. WEB STACK
+
+Use:
+
+* Next.js.
+* TypeScript.
+* React.
+* Tailwind CSS or another clean component system.
+* Responsive desktop-first admin dashboard.
+* PostgreSQL.
+* Prisma ORM or another strongly typed ORM.
+* Secure HTTP-only authentication cookies or another secure session mechanism.
+* Zod or equivalent validation.
+
+Deployment target:
+
+* Vercel for the web/API layer where practical.
+* PostgreSQL hosted separately or through a compatible managed PostgreSQL provider.
+
+Do not hard-code secrets.
+
+Use environment variables.
+
+---
+
+# 6. FIREBASE
+
+Use Firebase Cloud Messaging for Android device commands and notifications.
+
+Each Android installation must register its current FCM registration token with the backend.
+
+Do not assume an FCM token is permanent.
+
+When the token changes, update the backend.
+
+The server must be able to send commands such as:
+
+* CONFIG_UPDATED
+* QUOTA_UPDATED
+* SESSION_REVOKED
+* DEVICE_DISABLED
+* CREDENTIAL_VERSION_CHANGED
+* FORCE_RECONNECT
+* SYNC_REQUIRED
+
+Do not put sensitive Wi-Fi passwords or other secrets directly into FCM payloads.
+
+FCM should act as a wake-up/control signal.
+
+The Android app should then authenticate to the backend and retrieve the authoritative configuration securely.
+
+---
+
+# 7. USERS
+
+There are two major account roles.
+
+## ADMIN
+
+Can:
+
+* Create users.
+* Disable users.
+* Enable users.
+* Reset passwords.
+* Change quotas.
+* Change time limits.
+* Reset usage.
+* Disconnect devices.
+* Revoke sessions.
+* Register/revoke devices.
+* Configure Wi-Fi credentials.
+* View usage.
+* View session history.
+* View device health.
+* View Android version.
+* View app version.
+* View management mode.
+* View connectivity status.
+
+## FAMILY USER
+
+Cannot:
+
+* Create another account.
+* Change own quota.
+* Change own privileges.
+* Change Wi-Fi credentials.
+* Access admin APIs.
+* Reset own quota.
+* Bypass server authorization.
+
+The backend must enforce these permissions.
+
+Never rely solely on hiding UI elements.
+
+---
+
+# 8. NO PUBLIC REGISTRATION
+
+There must be no:
+
+"Create account"
+
+or
+
+"Sign up"
+
+flow for family users.
+
+Users are created only by the administrator.
+
+The backend must reject unauthorized account creation requests.
+
+---
+
+# 9. DATABASE
+
+Create at minimum these tables/models.
+
+## Admin
+
+Fields:
+
+* id
+* username
+* passwordHash
+* createdAt
+* updatedAt
+* lastLoginAt
+* status
+
+## User
+
+Fields:
+
+* id
+* username
+* passwordHash
+* displayName
+* status
+* createdAt
+* updatedAt
+* lastLoginAt
+
+## Device
+
+Fields:
+
+* id
+* userId
+* deviceUuid
+* manufacturer
+* model
+* androidVersion
+* apiLevel
+* appVersion
+* managementMode
+* deviceOwnerDetected
+* vpnSupported
+* vpnEnabled
+* wifiCapability
+* fcmToken
+* lastSeenAt
+* createdAt
+* updatedAt
+* status
+
+Never use hardware identifiers such as IMEI as the primary application identity.
+
+Generate an application-specific device installation ID and securely associate it with the server-side device record.
+
+## WifiCredential
+
+Fields:
+
+* id
+* ssid
+* encryptedPassword
+* securityType
+* credentialVersion
+* createdAt
+* updatedAt
+* active
+
+Never store the Wi-Fi password in plaintext.
+
+Never return the password in normal admin/user list responses.
+
+Never display the password to family users.
+
+## Quota
+
+Fields:
+
+* id
+* userId
+* dataLimitBytes nullable
+* timeLimitSeconds nullable
+* unlimitedData
+* unlimitedTime
+* effectiveFrom
+* effectiveUntil nullable
+* createdAt
+* updatedAt
+
+## Session
+
+Fields:
+
+* id
+* userId
+* deviceId
+* startedAt
+* endedAt nullable
+* lastHeartbeatAt
+* uploadedBytes
+* downloadedBytes
+* totalBytes
+* allocatedDataBytes nullable
+* allocatedTimeSeconds nullable
+* status
+* terminationReason
+* serverVersion
+
+Session statuses:
+
+* PENDING
+* ACTIVE
+* PAUSED
+* EXPIRED_DATA
+* EXPIRED_TIME
+* REVOKED
+* DEVICE_DISABLED
+* USER_DISABLED
+* NETWORK_ERROR
+* SERVER_ERROR
+* ENDED
+
+## UsageSample
+
+Fields:
+
+* id
+* sessionId
+* timestamp
+* uploadedBytes
+* downloadedBytes
+* totalBytes
+* measurementSource
+* createdAt
+
+## DeviceCommand
+
+Fields:
+
+* id
+* deviceId
+* commandType
+* payload
+* createdAt
+* deliveredAt
+* acknowledgedAt
+* status
+
+## AuditLog
+
+Fields:
+
+* id
+* adminId nullable
+* userId nullable
+* deviceId nullable
+* action
+* metadata
+* timestamp
+
+Record all important administrative actions.
+
+---
+
+# 10. QUOTA MODEL
+
+Support three modes.
+
+## Unlimited
+
+No data limit.
+
+No time limit.
+
+## Data limited
+
+Example:
+
+5 GB
+
+## Time limited
+
+Example:
+
+3 hours
+
+## Combined
+
+Example:
+
+5 GB OR 3 hours, whichever comes first.
+
+This means:
+
+if data >= dataLimit:
+
+terminate session.
+
+OR
+
+if elapsed server-authoritative time >= timeLimit:
+
+terminate session.
+
+The first condition reached wins.
+
+---
+
+# 11. SERVER-AUTHORITATIVE TIME
+
+Never trust the Android device clock for quota enforcement.
+
+The server determines:
+
+sessionStartTime
+
+and
+
+expirationTime.
+
+The Android device may display an estimated countdown, but the backend remains authoritative.
+
+Example:
+
+session started:
+
+2026-09-10T15:00:00Z
+
+time limit:
+
+10800 seconds
+
+expiration:
+
+2026-09-10T18:00:00Z
+
+The device should synchronize with server time periodically.
+
+---
+
+# 12. DATA USAGE
+
+Track:
+
+* download bytes.
+* upload bytes.
+* total bytes.
+
+Use a clear definition:
+
+total = download + upload
+
+Do not silently mix:
+
+* mobile data
+* Wi-Fi data
+* VPN overhead
+* all-interface traffic
+
+without documenting the measurement source.
+
+The system should clearly identify the measurement source.
+
+Prefer Wi-Fi-specific accounting when technically available and appropriate.
+
+If VPNService is used for enforcement, track the bytes actually passing through the VPN tunnel/interface.
+
+Do not double-count traffic from both NetworkStats and VPNService.
+
+Choose one authoritative measurement source for quota accounting.
+
+The implementation must document exactly which source is authoritative.
+
+---
+
+# 13. VPN ENFORCEMENT
+
+Implement an optional VpnService-based local enforcement layer.
+
+The VPN should NOT be presented as an external commercial VPN.
+
+It is a local traffic-control mechanism.
+
+Responsibilities:
+
+* Establish local VPN interface.
+* Route traffic through the local enforcement layer.
+* Count traffic.
+* Determine whether access is authorized.
+* Block traffic when access is expired.
+* Allow traffic while the session is authorized.
+* Shut down/transition when the session ends.
+
+Do not build an unnecessary remote VPN server.
+
+This is local Android traffic enforcement.
+
+The VPN must not capture, store, or inspect user content unnecessarily.
+
+Do not log:
+
+* URLs
+* message contents
+* passwords
+* page contents
+* packet payloads
+
+unless absolutely required for a legitimate debugging mode, and debugging must be disabled in production.
+
+Only count traffic metadata necessary for quota enforcement.
+
+---
+
+# 14. DEVICE OWNER MODE
+
+Implement Device Owner support as an OPTIONAL managed-device mode.
+
+The app must detect:
+
+* Is this app Device Owner?
+* Is a Device Policy Controller available?
+* Is always-on VPN available?
+* Can VPN lockdown be enabled?
+* What restrictions are supported by this Android version?
+
+Do not assume Device Owner provisioning can be performed silently from an ordinary installed application.
+
+Provide a clear enrollment/setup process.
+
+Support development/test provisioning using appropriate Android provisioning mechanisms.
+
+The Device Owner mode should be able to provide stronger enforcement.
+
+Where supported, investigate:
+
+DevicePolicyManager.setAlwaysOnVpnPackage(...)
+
+with lockdown enabled.
+
+This should be used only when appropriate and after verifying compatibility.
+
+The implementation must never blindly enable a policy that could permanently break network access without providing a recovery path.
+
+---
+
+# 15. STANDARD MODE
+
+If Device Owner is not available:
+
+The application should still work.
+
+Standard mode should support:
+
+* Login.
+* Device registration.
+* Wi-Fi provisioning using supported Android APIs.
+* VPN permission.
+* Local quota tracking.
+* Session tracking.
+* Server authorization.
+* FCM commands.
+* Disconnect/block behavior that Android legally permits.
+
+The dashboard must display:
+
+Management Mode: STANDARD
+
+instead of pretending that the device has managed-device capabilities.
+
+---
+
+# 16. CAPABILITY DETECTION
+
+At startup, the Android client should generate a capability report.
+
+Example:
+
+{
+"androidVersion": "...",
+"apiLevel": 35,
+"manufacturer": "...",
+"model": "...",
+"deviceOwner": true,
+"vpnAvailable": true,
+"alwaysOnVpnAvailable": true,
+"wifiSuggestionAvailable": true,
+"backgroundExecutionCapabilities": "...",
+"notificationPermission": true
+}
+
+Send this to the backend.
+
+The backend stores the capability state.
+
+The admin dashboard should show:
+
+MANAGED
+or
+
+STANDARD
+
+and the relevant capabilities.
+
+---
+
+# 17. WIFI CREDENTIAL SECURITY
+
+The Wi-Fi password is highly sensitive.
+
+Requirements:
+
+* Encrypt at rest on the backend.
+* Use a server-side encryption key stored in environment/secret management.
+* Never log plaintext credentials.
+* Never include plaintext credentials in normal logs.
+* Never put credentials in FCM payloads.
+* Never show credentials to family users.
+* Store device-side sensitive material using Android Keystore where appropriate.
+* Minimize how long plaintext credentials remain in memory.
+* Clear sensitive objects/references where practical.
+
+When the admin changes the Wi-Fi password:
+
+1. Encrypt and store the new password.
+2. Increment credentialVersion.
+3. Mark old configuration obsolete.
+4. Create a CONFIG_UPDATED command.
+5. Notify devices through FCM.
+6. Android authenticates to backend.
+7. Android retrieves the current configuration.
+8. Android applies the new supported Wi-Fi configuration.
+9. Android reconnects.
+10. Android reports success/failure.
+
+Do not assume the router itself has been remotely reconfigured.
+
+The dashboard is storing the credential the Android clients should use.
+
+---
+
+# 18. WI-FI CONNECTION STRATEGY
+
+Implement a Wi-Fi abstraction layer.
+
+Example:
+
+WifiManagerService
+|
++-- StandardAndroidWifiProvider
+|
++-- DeviceOwnerWifiProvider
+|
++-- UnsupportedWifiProvider
+
+The correct provider should be selected according to device capabilities.
+
+Do not hard-code one API for all Android versions.
+
+Support graceful failure.
+
+Display actionable instructions if Android requires user approval.
+
+For Android 10+ investigate WifiNetworkSuggestion as the primary standard mechanism for Internet-capable Wi-Fi configuration.
+
+For cases where Android requires user interaction, explicitly tell the user what to approve.
+
+For managed devices, use the appropriate Device Owner/network-management mechanisms available to that API level.
+
+---
+
+# 19. LOGIN FLOW
+
+Android:
+
+1. User opens app.
+2. User enters admin-provided username/password.
+3. POST /auth/login.
+4. Backend validates credentials.
+5. Backend returns secure access/refresh token mechanism.
+6. Android stores tokens securely.
+7. Android registers/updates device.
+8. Android retrieves account state.
+9. Android retrieves current quota.
+10. Android retrieves current Wi-Fi configuration version.
+11. Android determines management mode.
+12. Android begins connection/enforcement flow.
+
+No user registration.
+
+---
+
+# 20. DEVICE REGISTRATION
+
+On first login:
+
+Generate an installation-specific UUID.
+
+Register:
+
+* installation ID
+* manufacturer
+* model
+* Android version
+* API level
+* app version
+* capabilities
+* FCM token
+
+The admin dashboard should show a pending/new device if desired.
+
+The admin can approve or revoke a device.
+
+Do not identify devices using IMEI or other unnecessarily sensitive hardware identifiers.
+
+---
+
+# 21. SESSION FLOW
+
+When authorized:
+
+1. Android requests session authorization.
+2. Backend verifies:
+
+   * user active
+   * device active
+   * quota remaining
+   * no conflicting session
+3. Backend creates session.
+4. Server sets start time.
+5. Android begins enforcement.
+6. Android periodically reports usage/heartbeat.
+7. Backend updates session state.
+8. Android receives commands if quota changes.
+9. When limit is reached, session ends.
+10. Android blocks/disconnects as supported.
+
+---
+
+# 22. HEARTBEAT
+
+Use periodic heartbeats.
+
+Heartbeat should report:
+
+* device status
+* session ID
+* network connected
+* VPN status
+* current usage
+* battery state if useful
+* last successful server sync
+* app version
+
+Do not send heartbeats excessively.
+
+Use reasonable intervals.
+
+Example target:
+
+30–60 seconds during an active session.
+
+Longer interval while idle.
+
+Do not rely on WorkManager alone for second-by-second enforcement.
+
+Use an appropriate foreground service where continuous enforcement is required and permitted.
+
+---
+
+# 23. OFFLINE BEHAVIOR
+
+This is critical.
+
+If the server becomes temporarily unreachable:
+
+Do NOT immediately grant unlimited access.
+
+Use a controlled grace period.
+
+Example:
+
+1. Existing authorized session continues for a limited grace period.
+2. Local quota enforcement continues.
+3. Android retries server communication.
+4. If the grace period expires without successful authorization, access is suspended.
+
+The exact grace period should be configurable.
+
+Default example:
+
+5 minutes.
+
+Do not allow indefinite offline access.
+
+---
+
+# 24. REBOOT RECOVERY
+
+After device reboot:
+
+1. App starts required components where Android permits.
+2. Device state is detected.
+3. Current server authorization is checked.
+4. Active session is reconstructed if valid.
+5. Usage accounting resumes.
+6. VPN is restored where managed/always-on capability allows.
+7. Wi-Fi connection is restored using supported mechanisms.
+8. Device reports health to server.
+
+Managed Device Owner mode should provide stronger reboot persistence.
+
+---
+
+# 25. APP KILLED
+
+Standard mode:
+
+Do not claim that a normal application can make itself impossible to kill.
+
+Instead:
+
+* Detect service interruption where possible.
+* Restart where Android permits.
+* Reconcile state at next launch.
+* Continue enforcement through VPN/managed mechanisms where possible.
+
+Managed mode:
+
+Use Device Owner and always-on VPN capabilities where supported.
+
+---
+
+# 26. QUOTA EXHAUSTION
+
+When quota is reached:
+
+1. Stop authorizing new traffic.
+2. Block Internet traffic through the local enforcement layer.
+3. Disconnect Wi-Fi if supported/appropriate.
+4. End session.
+5. Report termination reason to server.
+6. Show user:
+
+"Internet access expired"
+
+with reason:
+
+* Data quota exhausted.
+* Time limit reached.
+* Administrator revoked access.
+* Account disabled.
+
+Do NOT simply delete/forget the Wi-Fi profile as the only enforcement mechanism.
+
+The primary control should be authorization/traffic enforcement.
+
+---
+
+# 27. ADMIN REMOTE ACTIONS
+
+Admin must be able to:
+
+## Disconnect
+
+Immediately terminate active session.
+
+## Disable user
+
+User cannot start a new session.
+
+Existing session should be revoked.
+
+## Enable user
+
+User can authenticate again.
+
+## Increase quota
+
+Example:
+
+5 GB -> 10 GB.
+
+Device should receive update.
+
+## Reset quota
+
+Set current usage allowance back to configured amount.
+
+Define clearly whether reset starts a new billing/quota period or modifies the current session.
+
+## Change time allowance
+
+Example:
+
+1 hour -> 3 hours.
+
+## Revoke device
+
+The device can no longer access the service.
+
+---
+
+# 28. REMOTE COMMAND SECURITY
+
+Never trust an FCM message by itself.
+
+FCM command:
+
+"SYNC_REQUIRED"
+
+should cause:
+
+Android -> authenticated HTTPS -> backend
+
+and backend returns authoritative state.
+
+For destructive commands:
+
+* validate session/device token.
+* validate command status.
+* use idempotency.
+* record command acknowledgement.
+
+Commands must be replay-safe.
+
+---
+
+# 29. ADMIN DASHBOARD
+
+Create a polished responsive dashboard.
+
+Pages:
+
+/login
+
+/dashboard
+
+/users
+
+/users/[id]
+
+/devices
+
+/devices/[id]
+
+/sessions
+
+/usage
+
+/network
+
+/settings
+
+/audit
+
+---
+
+# 30. DASHBOARD HOME
+
+Show cards:
+
+* Active users.
+* Connected devices.
+* Active sessions.
+* Today's total usage.
+* Expired users.
+* Disabled users.
+* Devices offline.
+* Devices requiring attention.
+
+Show a live user/device table.
+
+Columns:
+
+* User.
+* Device.
+* Status.
+* Management mode.
+* Usage.
+* Time used.
+* Time remaining.
+* Last seen.
+
+---
+
+# 31. USER MANAGEMENT
+
+Create user:
+
+* username
+* display name
+* password
+* data quota
+* time quota
+* unlimited data
+* unlimited time
+* status
+
+Edit user.
+
+Disable user.
+
+Reset password.
+
+Reset quota.
+
+Disconnect.
+
+Delete user.
+
+All destructive operations require confirmation.
+
+---
+
+# 32. USER DETAILS
+
+Show:
+
+Profile.
+
+Current device(s).
+
+Current session.
+
+Quota.
+
+Usage.
+
+Time.
+
+History.
+
+Audit events.
+
+Controls:
+
+* Enable.
+* Disable.
+* Reset quota.
+* Increase quota.
+* Disconnect.
+* Revoke device.
+* Change password.
+
+---
+
+# 33. DEVICE PAGE
+
+Show:
+
+* Device ID.
+* User.
+* Manufacturer.
+* Model.
+* Android version.
+* API level.
+* App version.
+* Management mode.
+* Device Owner status.
+* VPN capability.
+* VPN state.
+* Wi-Fi state.
+* Last seen.
+* Current IP only if genuinely necessary.
+* FCM registration state.
+
+Do not collect unnecessary personal/device information.
+
+---
+
+# 34. NETWORK PAGE
+
+Show:
+
+Current SSID.
+
+Credential version.
+
+Last updated.
+
+Number of devices using current credential.
+
+Admin action:
+
+"Update Wi-Fi Credentials"
+
+Form:
+
+SSID
+
+Wi-Fi security type
+
+Password
+
+Confirm password
+
+When saved:
+
+* encrypt.
+* increment credential version.
+* notify devices.
+
+Never display the existing password in plaintext after saving.
+
+---
+
+# 35. USAGE PAGE
+
+Show:
+
+* Usage by user.
+* Usage by device.
+* Daily usage.
+* Session duration.
+* Active sessions.
+* Historical sessions.
+
+Charts:
+
+* Data usage over time.
+* User comparison.
+* Active sessions.
+
+Do not overcomplicate the first version.
+
+---
+
+# 36. API DESIGN
+
+Use REST APIs initially.
+
+Example:
+
+POST /api/auth/login
+
+POST /api/auth/refresh
+
+POST /api/auth/logout
+
+POST /api/devices/register
+
+GET /api/device/config
+
+GET /api/device/quota
+
+POST /api/device/heartbeat
+
+POST /api/device/usage
+
+POST /api/device/session/start
+
+POST /api/device/session/end
+
+POST /api/device/command/ack
+
+GET /api/device/capabilities
+
+Admin:
+
+POST /api/admin/users
+
+GET /api/admin/users
+
+GET /api/admin/users/:id
+
+PATCH /api/admin/users/:id
+
+DELETE /api/admin/users/:id
+
+POST /api/admin/users/:id/reset-quota
+
+POST /api/admin/users/:id/disconnect
+
+POST /api/admin/devices/:id/revoke
+
+GET /api/admin/devices
+
+GET /api/admin/sessions
+
+GET /api/admin/usage
+
+GET /api/admin/network
+
+PUT /api/admin/network
+
+GET /api/admin/audit
+
+---
+
+# 37. API SECURITY
+
+Every endpoint must have explicit authorization.
+
+Never rely on frontend restrictions.
+
+Use:
+
+* HTTPS only.
+* Secure password hashing.
+* Rate limiting.
+* Request validation.
+* CSRF protection where cookie authentication is used.
+* Secure cookies.
+* Token rotation.
+* Expiration.
+* Device binding where appropriate.
+* Audit logging.
+
+Never log:
+
+* passwords.
+* access tokens.
+* refresh tokens.
+* Wi-Fi passwords.
+* sensitive FCM tokens unnecessarily.
+
+---
+
+# 38. PASSWORD SECURITY
+
+User/admin passwords must never be stored plaintext.
+
+Use Argon2id if supported by the chosen backend stack.
+
+Passwords must not be retrievable by admins.
+
+Admin can reset a password but cannot view the existing password.
+
+---
+
+# 39. ANDROID TOKEN STORAGE
+
+Use Android Keystore-backed secure storage where appropriate.
+
+Do not store authentication secrets in:
+
+* SharedPreferences plaintext.
+* normal files.
+* SQLite plaintext.
+
+Room may store non-sensitive application state.
+
+---
+
+# 40. UI DESIGN
+
+Android application should be simple and family-friendly.
+
+Main screens:
+
+## Login
+
+Username.
+
+Password.
+
+Login button.
+
+## Home
+
+Connection state.
+
+User name.
+
+Current quota.
+
+Current usage.
+
+Time remaining.
+
+Session status.
+
+## Expired
+
+Reason.
+
+Remaining quota.
+
+Contact administrator message.
+
+## Settings
+
+Minimal.
+
+Do not expose Wi-Fi password.
+
+Show:
+
+* device status.
+* app version.
+* management mode.
+* connection status.
+
+Do not give users unnecessary controls that could weaken enforcement.
+
+---
+
+# 41. ADMIN UI STYLE
+
+Clean modern dashboard.
+
+Use:
+
+* cards.
+* tables.
+* status badges.
+* charts.
+* confirmation dialogs.
+* toast/snackbar feedback.
+* loading states.
+* empty states.
+* error states.
+
+Desktop optimized but responsive.
+
+---
+
+# 42. ERROR HANDLING
+
+Every network operation needs:
+
+* timeout.
+* retry strategy.
+* meaningful error state.
+* logging without secrets.
+
+Examples:
+
+"Server unavailable"
+
+"Account disabled"
+
+"Device revoked"
+
+"Wi-Fi configuration requires approval"
+
+"VPN permission required"
+
+"VPN unavailable"
+
+"Quota expired"
+
+"Session revoked"
+
+---
+
+# 43. LOGGING
+
+Development:
+
+Useful structured logs.
+
+Production:
+
+Minimal logs.
+
+Never log sensitive credentials.
+
+Use structured logging.
+
+Include:
+
+* timestamp
+* device ID
+* session ID
+* request ID
+* event type
+
+when useful.
+
+---
+
+# 44. TESTING
+
+Implement tests for:
+
+## Backend
+
+* Authentication.
+* Authorization.
+* User creation.
+* Quota calculation.
+* Time calculation.
+* Session creation.
+* Session termination.
+* Device registration.
+* Credential versioning.
+* Remote commands.
+* Race conditions.
+
+## Android
+
+* Login.
+* Token storage.
+* Device registration.
+* Wi-Fi capability detection.
+* VPN permission flow.
+* Usage calculation.
+* Quota exhaustion.
+* Time expiration.
+* Reboot recovery.
+* Network loss.
+* Server loss.
+* FCM command handling.
+
+## Integration
+
+Test:
+
+1. Admin creates user.
+2. User logs in.
+3. Device registers.
+4. Device receives configuration.
+5. Wi-Fi connects.
+6. Session starts.
+7. Usage is reported.
+8. Admin changes quota.
+9. Device receives update.
+10. Quota expires.
+11. Device loses Internet access.
+12. Session is marked expired.
+
+---
+
+# 45. IMPORTANT EDGE CASES
+
+Handle all of these:
+
+* Device reboot during session.
+* App process killed.
+* VPN disconnected.
+* Wi-Fi disconnected.
+* Wi-Fi reconnect.
+* Router temporarily offline.
+* Backend temporarily offline.
+* FCM unavailable.
+* FCM token changed.
+* User disabled while connected.
+* Device revoked while connected.
+* Admin changes quota while session active.
+* Admin resets quota while session active.
+* Credential changed while device is offline.
+* Credential changed while device is connected.
+* Device clock incorrect.
+* Duplicate heartbeats.
+* Duplicate usage reports.
+* Out-of-order usage reports.
+* Network interface changes.
+* Device goes to sleep.
+* Battery saver.
+* Android background restrictions.
+* Manufacturer-specific restrictions.
+* Multiple devices for one user.
+* Multiple users on one device.
+* Concurrent sessions.
+
+---
+
+# 46. MULTIPLE DEVICE POLICY
+
+Initially implement:
+
+ONE USER -> ONE ACTIVE DEVICE
+
+but design the database to support multiple devices later.
+
+If an account attempts to register another device:
+
+either:
+
+* reject it,
+* replace old device,
+* or require admin approval.
+
+Make this configurable.
+
+---
+
+# 47. DATA ACCOUNTING SAFETY
+
+Never allow reported usage to decrease arbitrarily.
+
+The backend must protect against:
+
+usage:
+
+5 GB -> 2 GB
+
+without an explicit reset.
+
+Use monotonic accounting where possible.
+
+Handle device counters resetting after reboot.
+
+Maintain server-side cumulative totals.
+
+Do not blindly trust every client-provided byte counter.
+
+---
+
+# 48. SERVER QUOTA ALGORITHM
+
+Implement a single reusable quota engine.
+
+Example:
+
+remainingData =
+allocatedData - authoritativeUsedData
+
+remainingTime =
+expirationTime - serverNow
+
+accessAllowed if:
+
+user.active
+AND device.active
+AND session.valid
+AND (
+unlimitedData OR remainingData > 0
+)
+AND (
+unlimitedTime OR remainingTime > 0
+)
+
+If either finite limit reaches zero:
+
+accessAllowed = false
+
+Centralize this logic.
+
+Do not duplicate quota logic across random controllers.
+
+---
+
+# 49. CONCURRENCY
+
+Use database transactions for:
+
+* session creation.
+* quota reset.
+* quota modification.
+* session termination.
+* device revocation.
+
+Prevent two simultaneous requests from creating multiple active sessions if the policy says only one is allowed.
+
+---
+
+# 50. SECURITY MODEL
+
+Assume the Android client can be modified by a technically skilled user in STANDARD mode.
+
+Therefore:
+
+* never trust the client as the authority.
+* never send unlimited privileges to the client.
+* never rely solely on client-side quota calculations.
+* server must validate authorization.
+* client enforcement is an enforcement layer, not the ultimate authority.
+
+MANAGED Device Owner mode provides stronger local enforcement.
+
+---
+
+# 51. PRIVACY
+
+This is a family system, but still minimize data collection.
+
+Collect only what is needed.
+
+Do NOT collect:
+
+* browsing history.
+* URLs.
+* message contents.
+* application contents.
+* passwords.
+* packet payloads.
+
+For usage:
+
+collect byte counts and session metadata.
+
+---
+
+# 52. BUILD CONFIGURATION
+
+Provide:
+
+Development environment.
+
+Production environment.
+
+.env.example
+
+Android debug build.
+
+Android release build configuration.
+
+Backend environment variables.
+
+Database migration system.
+
+Seed script.
+
+Admin bootstrap process.
+
+---
+
+# 53. INITIAL ADMIN
+
+Provide a secure first-run bootstrap mechanism.
+
+Do NOT hard-code:
+
+admin/admin
+
+or any default production password.
+
+Development seed may use test credentials but production must force secure configuration.
+
+---
+
+# 54. DATABASE MIGRATIONS
+
+Use proper migrations.
+
+Never manually assume database schema.
+
+Provide:
+
+migration commands.
+
+seed commands.
+
+reset commands for development.
+
+---
+
+# 55. API DOCUMENTATION
+
+Generate API documentation.
+
+Document:
+
+* authentication.
+* request body.
+* response.
+* error codes.
+* authorization requirements.
+* device behavior.
+
+Prefer OpenAPI/Swagger.
+
+---
+
+# 56. ANDROID DOCUMENTATION
+
+Create:
+
+ANDROID_SETUP.md
+
+Include:
+
+* Android Studio requirements.
+* SDK requirements.
+* Firebase setup.
+* SHA configuration if required.
+* emulator testing.
+* physical device testing.
+* VPN permission.
+* Device Owner enrollment.
+* debugging.
+* release build.
+
+---
+
+# 57. DEVICE OWNER DOCUMENTATION
+
+Create:
+
+DEVICE_OWNER_SETUP.md
+
+Explain:
+
+* what Device Owner means.
+* when to use it.
+* test-device provisioning.
+* factory reset requirements where applicable.
+* enrollment flow.
+* how to recover the device.
+* how to remove Device Owner during development.
+* limitations.
+
+Do not present Device Owner as something an ordinary app can silently grant itself.
+
+---
+
+# 58. STANDARD MODE DOCUMENTATION
+
+Create:
+
+STANDARD_MODE.md
+
+Explain:
+
+* supported capabilities.
+* limitations.
+* user approvals.
+* Wi-Fi provisioning behavior.
+* VPN permission.
+* background restrictions.
+* what cannot be guaranteed.
+
+---
+
+# 59. BACKEND DOCUMENTATION
+
+Create:
+
+BACKEND_SETUP.md
+
+Include:
+
+* PostgreSQL setup.
+* environment variables.
+* migrations.
+* seed.
+* local development.
+* Vercel deployment.
+* FCM server configuration.
+* encryption key configuration.
+
+---
+
+# 60. DO NOT FAKE FUNCTIONALITY
+
+This is extremely important.
+
+Do not implement:
+
+fake Wi-Fi connection indicators.
+
+fake usage numbers.
+
+fake quota enforcement.
+
+fake backend responses.
+
+fake "Device Owner" status.
+
+fake VPN status.
+
+fake live updates.
+
+fake database persistence.
+
+If a capability cannot be implemented on a specific Android configuration, expose the actual limitation and implement the strongest valid fallback.
+
+---
+
+# 61. DEVELOPMENT STRATEGY
+
+Do NOT attempt to build the entire system blindly in one giant step.
+
+Work in phases.
+
+## PHASE 1
+
+Create repository structure.
+
+Build backend.
+
+Build database.
+
+Build authentication.
+
+Build admin user management.
+
+Build basic Android login.
+
+Verify end-to-end authentication.
+
+STOP and test.
+
+## PHASE 2
+
+Build device registration.
+
+Build capability detection.
+
+Build dashboard device page.
+
+Verify Android -> backend registration.
+
+STOP and test.
+
+## PHASE 3
+
+Build Wi-Fi credential storage.
+
+Build encrypted credential handling.
+
+Build Android Wi-Fi provider abstraction.
+
+Implement standard Android Wi-Fi provisioning.
+
+Test on physical Android devices.
+
+Do not assume emulator behavior equals real devices.
+
+STOP and test.
+
+## PHASE 4
+
+Build sessions.
+
+Build time quota.
+
+Build server-authoritative session expiration.
+
+STOP and test.
+
+## PHASE 5
+
+Build usage accounting.
+
+Build data quota.
+
+Test with controlled network traffic.
+
+STOP and test.
+
+## PHASE 6
+
+Build VpnService.
+
+Implement traffic enforcement.
+
+Test:
+
+* allowed traffic.
+* blocked traffic.
+* quota expiration.
+* reconnect.
+
+STOP and test.
+
+## PHASE 7
+
+Build FCM commands.
+
+Test remote:
+
+* disconnect.
+* quota update.
+* user disable.
+* configuration update.
+
+STOP and test.
+
+## PHASE 8
+
+Build Device Owner mode.
+
+Test managed-device behavior separately.
+
+STOP and test.
+
+## PHASE 9
+
+Polish UI.
+
+## PHASE 10
+
+Security audit.
+
+## PHASE 11
+
+Production deployment.
+
+---
+
+# 62. IMPLEMENTATION RULE
+
+Before implementing any Android API:
+
+Check the current official Android documentation for:
+
+* target API.
+* minimum API.
+* permissions.
+* restrictions.
+* whether user approval is required.
+* whether Device Owner is required.
+* manufacturer limitations.
+
+Do not rely on old Stack Overflow solutions.
+
+If Android has changed behavior, adapt to the current API.
+
+---
+
+# 63. OFFICIAL DOCUMENTATION SOURCES
+
+Use official Android documentation as the authority for Android behavior.
+
+Important areas:
+
+DevicePolicyManager:
+
+https://developer.android.com/reference/android/app/admin/DevicePolicyManager
+
+VpnService:
+
+https://developer.android.com/reference/android/net/VpnService
+
+Wi-Fi infrastructure:
+
+https://developer.android.com/develop/connectivity/wifi/wifi-infrastructure
+
+Wi-Fi suggestion:
+
+https://developer.android.com/develop/connectivity/wifi/wifi-suggest
+
+Firebase Cloud Messaging:
+
+https://firebase.google.com/docs/cloud-messaging/android/get-started
+
+If an implementation conflicts with official documentation, follow the official documentation.
+
+---
+
+# 64. FINAL ACCEPTANCE CRITERIA
+
+The project is considered successful only when the following works on a real Android device:
+
+1. Admin logs into dashboard.
+2. Admin creates family user.
+3. Admin assigns 1 GB and 1 hour.
+4. User installs Android app.
+5. User logs in.
+6. Device registers.
+7. Backend identifies device capability.
+8. App obtains Wi-Fi configuration through the appropriate Android mechanism.
+9. Device connects to Airtel Xstream Wi-Fi.
+10. Session starts.
+11. Usage is tracked.
+12. Time is tracked.
+13. Dashboard reflects usage.
+14. Admin can see active device.
+15. Admin can remotely terminate the session.
+16. Device stops authorized Internet access.
+17. Admin can restore/increase quota.
+18. Device can start a new authorized session.
+19. Data quota expiration works.
+20. Time quota expiration works.
+21. Reboot recovery works.
+22. Network interruption recovery works.
+23. Server interruption follows the defined grace-period policy.
+24. FCM command handling works.
+25. Wi-Fi credential version changes propagate.
+26. Device Owner mode works where provisioned.
+27. Standard mode still works without Device Owner.
+28. No plaintext passwords appear in logs/database.
+29. No fake capability claims are displayed.
+30. All important actions appear in the audit log.
+
+---
+
+# 65. MOST IMPORTANT ARCHITECTURAL PRINCIPLE
+
+Build the application around:
+
+SERVER AUTHORIZATION
++
+LOCAL ENFORCEMENT
++
+CAPABILITY DETECTION
+
+not around:
+
+"the Android app simply forgets the Wi-Fi network."
+
+Wi-Fi disconnection is only one possible consequence of expiration.
+
+The real access decision is:
+
+AUTHORIZED
+or
+NOT AUTHORIZED.
+
+The server determines authorization.
+
+The Android device enforces authorization.
+
+Device Owner strengthens enforcement when available.
+
+Standard Android mode uses the strongest legitimate mechanisms available without pretending it has Device Owner privileges.
+
+---
+
+# 66. BEFORE WRITING CODE
+
+First inspect the existing workspace/repository.
+
+Determine:
+
+* operating system.
+* installed Android Studio/SDK.
+* installed JDK.
+* Node.js version.
+* package manager.
+* available PostgreSQL.
+* Firebase configuration status.
+* existing project files.
+* available environment variables.
+* whether an Android project already exists.
+* whether a Next.js project already exists.
+
+Do not overwrite an existing project blindly.
+
+If there is existing code, preserve useful work and refactor safely.
+
+---
+
+# 67. OUTPUT EXPECTATION
+
+As you work:
+
+1. Explain what you are implementing.
+2. Create actual files.
+3. Run builds.
+4. Run tests.
+5. Fix compilation errors.
+6. Fix runtime errors.
+7. Verify API contracts.
+8. Verify database migrations.
+9. Verify Android manifest permissions.
+10. Verify Gradle configuration.
+11. Verify VpnService declaration.
+12. Verify FCM integration.
+13. Verify Device Owner receiver configuration.
+14. Verify deployment configuration.
+
+Do not stop after generating code.
+
+The goal is a RUNNABLE PROJECT.
+
+At the end of every major phase provide:
+
+* what was built.
+* files created/modified.
+* tests executed.
+* tests passed/failed.
+* known limitations.
+* exact next step.
+
+---
+
+# 68. DO NOT ASK ME TO MAKE ARCHITECTURAL DECISIONS UNLESS NECESSARY
+
+Make sensible engineering decisions yourself.
+
+If there are multiple technically valid approaches:
+
+* choose the most maintainable.
+* choose the most secure.
+* choose the approach compatible with current Android APIs.
+* document the decision.
+
+Only ask me when a decision genuinely requires information that cannot be inferred.
+
+---
+
+# 69. FIRST TASK
+
+Do NOT immediately generate the entire application.
+
+First:
+
+1. Inspect the workspace.
+2. Determine the current environment.
+3. Propose the repository structure.
+4. Identify required SDK/tool versions.
+5. Identify missing external credentials/configuration.
+6. Identify any Android API limitations that materially affect implementation.
+7. Create an implementation plan based on the actual workspace.
+8. Then begin PHASE 1.
+
+After inspection, start implementing the backend/database/authentication foundation and Android project skeleton.
+
+Keep the project runnable after each phase.
+
+The final result must be a real, secure, maintainable family Android network access management system—not a UI prototype.
+
+
+# CRITICAL SECURITY INSTRUCTION — SECRETS AND CREDENTIALS
+
+Before continuing development, follow these rules strictly.
+
+## NEVER request, hard-code, commit, expose, or place real production secrets in source code.
+
+This includes, but is not limited to:
+
+* Production PostgreSQL username/password.
+* Production PostgreSQL connection string.
+* Firebase service-account private key.
+* Firebase private key JSON.
+* Firebase API secrets.
+* Vercel deployment secrets.
+* Vercel tokens.
+* JWT signing secrets.
+* Session secrets.
+* Encryption keys.
+* Wi-Fi SSID/password if it is a real production credential.
+* Admin production password.
+* User production passwords.
+* Any API keys.
+* Any private certificates or private keys.
+
+## REQUIRED APPROACH
+
+Create appropriate `.env.example` files containing ONLY placeholder values.
+
+For example:
+
+```env
+DATABASE_URL=your_database_url_here
+JWT_SECRET=generate_a_secure_random_secret_here
+ENCRYPTION_KEY=generate_a_secure_32_byte_key_here
+
+FIREBASE_PROJECT_ID=your_project_id_here
+FIREBASE_CLIENT_EMAIL=your_service_account_email_here
+FIREBASE_PRIVATE_KEY=your_private_key_here
+
+NEXT_PUBLIC_API_URL=http://localhost:3000
+```
+
+Never put actual secrets into `.env.example`.
+
+Create `.gitignore` entries that prevent real environment files from being committed:
+
+```text
+.env
+.env.local
+.env.production
+.env*.local
+```
+
+If environment files already exist, inspect their structure if necessary, but DO NOT print their secret values into the terminal, logs, generated documentation, chat output, source files, or commits.
+
+## WI-FI CREDENTIALS
+
+Do not hard-code the real Airtel Xstream Wi-Fi password into:
+
+* Android source code.
+* Kotlin constants.
+* XML resources.
+* Build configuration.
+* Git.
+* README files.
+* screenshots.
+* test fixtures.
+* logs.
+
+The application must retrieve Wi-Fi credentials through the secure backend architecture specified in the main project prompt.
+
+For development, use clearly fake test credentials such as:
+
+```text
+TEST_WIFI_SSID
+TEST_WIFI_PASSWORD
+```
+
+Never use the real family Wi-Fi password for automated tests.
+
+## FIREBASE
+
+Do not commit Firebase service-account credentials.
+
+Use environment variables or the deployment platform's secret/environment-variable system.
+
+If a Firebase configuration file is required by Android tooling, follow the appropriate secure local configuration process and ensure sensitive files are excluded from Git where appropriate.
+
+Never expose Firebase server private keys in frontend/browser code.
+
+## DATABASE
+
+Do not put a production PostgreSQL connection string into source code.
+
+Use:
+
+```text
+DATABASE_URL
+```
+
+through the environment.
+
+Development may use a local database or explicitly configured development database.
+
+## VERCEL
+
+Do not put Vercel tokens or production secrets into the repository.
+
+Production environment variables must be configured through the deployment environment/secret-management system.
+
+The repository should contain only:
+
+```text
+.env.example
+```
+
+with placeholders.
+
+## ENCRYPTION
+
+If the application encrypts Wi-Fi credentials or other sensitive data:
+
+* Generate encryption keys securely.
+* Store the real encryption key outside the repository.
+* Never hard-code the encryption key.
+* Never print the encryption key.
+* Never include it in sample code.
+* Never commit it to Git.
+
+## ADMIN CREDENTIALS
+
+Do not create a production default such as:
+
+```text
+admin/admin
+admin/password
+administrator/123456
+```
+
+Development seed credentials may exist only if clearly marked as development-only and must never be treated as production credentials.
+
+Production setup must require a secure administrator password.
+
+## IF A SECRET IS REQUIRED
+
+If you reach a point where a real secret is required:
+
+1. Create the appropriate environment variable.
+2. Add it to `.env.example` as a placeholder.
+3. Add the real variable to the local/deployment secret configuration only if I explicitly provide/configure it.
+4. Do not ask me to paste private keys or passwords into the source code.
+5. Never display the secret in your response.
+
+If a secret has not been provided, use a placeholder and continue implementing everything that does not require the real secret.
+
+## GIT SECURITY
+
+Before making commits, verify that sensitive files are excluded.
+
+Check for accidental secrets using appropriate secret-scanning/search methods.
+
+Do NOT commit:
+
+```text
+.env
+.env.local
+.env.production
+*.pem
+*.key
+service-account*.json
+firebase-admin*.json
+```
+
+unless a particular file is explicitly documented as non-sensitive and contains no credentials.
+
+## FINAL SECURITY CHECK
+
+Before declaring the project complete, scan the repository for likely secrets, including:
+
+* passwords
+* API keys
+* private keys
+* connection strings
+* JWT secrets
+* encryption keys
+* Firebase credentials
+* Vercel tokens
+* Wi-Fi credentials
+
+If anything resembling a real credential is found:
+
+1. Stop.
+2. Remove it from the source.
+3. Replace it with an environment variable.
+4. Update `.env.example`.
+5. Ensure the file is ignored by Git.
+6. Report that the issue was fixed WITHOUT revealing the secret itself.
+
+## MOST IMPORTANT RULE
+
+REAL SECRETS BELONG IN SECRET/ENVIRONMENT CONFIGURATION — NEVER IN THE SOURCE CODE OR GIT REPOSITORY.
+
+Use fake development values and placeholders until the real deployment environment is configured.
