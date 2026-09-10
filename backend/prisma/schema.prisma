@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  devices   Device[]
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model Device {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  macAddress     String?  @unique
+  name           String
+  
+  fcmToken       String?
+  
+  // Base Quotas
+  timeQuotaLimit Int?     // in minutes
+  dataQuotaLimit BigInt?  // in bytes
+  
+  // Active session tracking
+  currentSessionId String?  @unique // points to the active Session
+  
+  // The device's last reported cumulative Wi-Fi usage baseline
+  // Updated at the start of a session
+  baselineWifiRxBytes BigInt @default(0)
+  baselineWifiTxBytes BigInt @default(0)
+  
+  // Total accounted usage across all sessions (for reconciliation)
+  totalWifiRxBytes BigInt @default(0)
+  totalWifiTxBytes BigInt @default(0)
+
+  sessions         Session[]
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Session {
+  id             String   @id @default(cuid())
+  deviceId       String
+  device         Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  
+  status         SessionStatus @default(ACTIVE)
+  
+  // Time enforcing
+  startedAt      DateTime @default(now())
+  expiresAt      DateTime?
+  serverNowAtStart DateTime @default(now()) // used to sync elapsedRealtime
+  
+  endedAt        DateTime?
+  
+  // Usage enforcing
+  dataQuota      BigInt?  // bytes allowed for this session
+  
+  // Tracked usage for this session only
+  sessionRxBytes BigInt   @default(0)
+  sessionTxBytes BigInt   @default(0)
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+enum SessionStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  ENDED
+}
+
+model Settings {
+  id               String   @id @default("global")
+  wifiSsid         String?
+  wifiPasswordEnc  String?  // Encrypted Wi-Fi password
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
